@@ -214,6 +214,9 @@ NUM_DECODER_LAYERS = 3
 transformer = Seq2SeqTransformer(NUM_ENCODER_LAYERS, NUM_DECODER_LAYERS, EMB_SIZE,
                                  NHEAD, SRC_VOCAB_SIZE, TGT_VOCAB_SIZE, FFN_HID_DIM)
 
+from torch.utils.tensorboard import SummaryWriter
+# default `log_dir` is "runs" - we'll be more specific here
+writer = SummaryWriter('./runs/transformer_seq2seq_tfboard')
 
 
 for p in transformer.parameters():
@@ -285,7 +288,7 @@ def train_epoch(model, optimizer):
     train_iter = Multi30k(split='train', language_pair=(SRC_LANGUAGE, TGT_LANGUAGE))
     train_dataloader = DataLoader(train_iter, batch_size=BATCH_SIZE, collate_fn=collate_fn)
 
-    for src, tgt in train_dataloader:
+    for i, (src, tgt) in enumerate(train_dataloader):
         src = src.to(DEVICE)
         tgt = tgt.to(DEVICE)
 
@@ -294,6 +297,9 @@ def train_epoch(model, optimizer):
         src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt_input)
 
         logits = model(src, tgt_input, src_mask, tgt_mask,src_padding_mask, tgt_padding_mask, src_padding_mask)
+        if i == 0:
+            writer.add_graph(model, (src, tgt_input, src_mask, tgt_mask,src_padding_mask, tgt_padding_mask, src_padding_mask))
+            writer.close()
 
         optimizer.zero_grad()
 

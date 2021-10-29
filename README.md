@@ -31,6 +31,9 @@ Based on the structure of the code, and my intuition, I would guess those stand 
 
 2.
 
+python main.py
+
+
 3.
 
 4.
