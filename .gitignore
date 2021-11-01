@@ -3,3 +3,5 @@
 
 # tfboard
 runs/
+
+__pycache__/

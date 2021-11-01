@@ -4,6 +4,10 @@ https://pytorch.org/tutorials/beginner/translation_transformer.html
 code:
 https://github.com/pytorch/tutorials/blob/master/beginner_source/translation_transformer.py
 
+task:
+
+de -> en
+
 How to run?
 
 1.

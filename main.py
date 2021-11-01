@@ -20,11 +20,33 @@ dataset to train a German to English translation model.
 # that yields a pair of source-target raw sentences.
 #
 #
-
+import torch
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
 from torchtext.datasets import Multi30k
 from typing import Iterable, List
+import numpy as np
+import sys
+
+# matplot
+import matplotlib.pyplot as plt
+
+# logging
+import log
+logger = log.get_logger(__name__)
+torch.set_printoptions(linewidth=1000)
+
+sys.stdout.flush()
+
+# import debugpy
+# debugpy.listen(5678)
+# debugpy.wait_for_client()
+# debugpy.breakpoint()
+
+
+from torch.utils.tensorboard import SummaryWriter
+# default `log_dir` is "runs" - we'll be more specific here
+writer = SummaryWriter('./runs/transformer_seq2seq_tfboard')
 
 
 SRC_LANGUAGE = 'de'
@@ -42,13 +64,25 @@ vocab_transform = {}
 token_transform[SRC_LANGUAGE] = get_tokenizer('spacy', language='de_core_news_sm')
 token_transform[TGT_LANGUAGE] = get_tokenizer('spacy', language='en_core_web_sm')
 
+# print('token_transform:')
+# print(token_transform)
+# {'de': functools.partial(<function _spacy_tokenize at 0x7f38523201f0>, spacy=<spacy.lang.de.German object at 0x7f3991f15700>), 'en': functools.partial(<function _spacy_tokenize at 0x7f38523201f0>, spacy=<spacy.lang.en.English object at 0x7f3851a7be20>)}
 
 # helper function to yield list of tokens
 def yield_tokens(data_iter: Iterable, language: str) -> List[str]:
     language_index = {SRC_LANGUAGE: 0, TGT_LANGUAGE: 1}
 
     for data_sample in data_iter:
-        yield token_transform[language](data_sample[language_index[language]])
+        tmp3 = language_index[language]
+        logger.debug(f"tmp3: {tmp3}")
+
+        tmp2 = data_sample[tmp3]
+        logger.debug(f"tmp2: {tmp2}")
+
+        tmp = token_transform[language](tmp2)
+        logger.debug(f"tmp: {tmp}")
+
+        yield tmp
 
 # Define special symbols and indices
 UNK_IDX, PAD_IDX, BOS_IDX, EOS_IDX = 0, 1, 2, 3
@@ -100,18 +134,53 @@ class PositionalEncoding(nn.Module):
                  dropout: float,
                  maxlen: int = 5000):
         super(PositionalEncoding, self).__init__()
-        den = torch.exp(- torch.arange(0, emb_size, 2)* math.log(10000) / emb_size)
+
+        # logger.debug(f"emb_size\n {emb_size}")
+
+        tmp1 = torch.arange(0, emb_size, 2)
+        # logger.debug(f'tmp1\n {tmp1}')
+
+        tmp2 = math.log(10000)
+        # logger.debug(f'tmp2\n {tmp2}')
+
+        tmp = - tmp1 * tmp2 / emb_size
+        # logger.debug(f'tmp\n {tmp}')
+
+        den = torch.exp(tmp)
+        # logger.info(f"den\n{den.shape}\n{den}")
+
+        # den = torch.exp(- torch.arange(0, emb_size, 2)* math.log(10000) / emb_size)
         pos = torch.arange(0, maxlen).reshape(maxlen, 1)
+        # logger.info(f"pos\n{pos.shape}\n{pos}")
+
         pos_embedding = torch.zeros((maxlen, emb_size))
+        # logger.debug(f"pos_embedding\n {pos_embedding}")
+        # logger.debug(f"maxlen\n {maxlen}")
+
         pos_embedding[:, 0::2] = torch.sin(pos * den)
+        # logger.info(f'torch.sin(pos * den)\n{torch.sin(pos * den).shape}\n{torch.sin(pos * den)}')
+        # logger.info(f'pos*den\n{(pos*den).shape}\n{pos*den}')
+
+        # tensor_to_save = pos * den
+        # np.savetxt('tensor_values.txt', tensor_to_save.numpy())
+
+        # logger.debug(f'pos_embedding[:, 0::2]\n {pos_embedding}')
+
         pos_embedding[:, 1::2] = torch.cos(pos * den)
+        # logger.debug(f'torch.cos(pos * den)\n{torch.cos(pos * den)}')
+        # logger.debug(f'pos_embedding[:, 1::2]\n {pos_embedding}')
+
         pos_embedding = pos_embedding.unsqueeze(-2)
+        # logger.debug(f'pos_embedding\n {pos_embedding}')
 
         self.dropout = nn.Dropout(dropout)
         self.register_buffer('pos_embedding', pos_embedding)
 
     def forward(self, token_embedding: Tensor):
-        return self.dropout(token_embedding + self.pos_embedding[:token_embedding.size(0), :])
+        # logger.info(f"toke_embedding\t{token_embedding.shape}")
+
+        tmp = self.dropout(token_embedding + self.pos_embedding[:token_embedding.size(0), :])
+        return tmp
 
 # helper Module to convert tensor of input indices into corresponding tensor of token embeddings
 class TokenEmbedding(nn.Module):
@@ -121,7 +190,19 @@ class TokenEmbedding(nn.Module):
         self.emb_size = emb_size
 
     def forward(self, tokens: Tensor):
-        return self.embedding(tokens.long()) * math.sqrt(self.emb_size)
+        # logger.info('print tokens...')
+        # print(tokens.shape)
+        # print(tokens)
+
+        tmp2 = tokens.long()
+        tmp3 = math.sqrt(self.emb_size)
+        tmp = self.embedding(tmp2) * tmp3
+        # logger.info('print tmp...')
+        # print(tmp.shape)
+        # print(tmp)
+
+        return tmp
+        # return self.embedding(tokens.long()) * math.sqrt(self.emb_size)
 
 # Seq2Seq Network
 class Seq2SeqTransformer(nn.Module):
@@ -142,10 +223,31 @@ class Seq2SeqTransformer(nn.Module):
                                        dim_feedforward=dim_feedforward,
                                        dropout=dropout)
         self.generator = nn.Linear(emb_size, tgt_vocab_size)
+        # print('generator, state_dict\n', self.generator.state_dict())
+
         self.src_tok_emb = TokenEmbedding(src_vocab_size, emb_size)
+        # logger.info(f"{src_vocab_size}, {emb_size}")
+        # print('src_tok_emb, state_dict\n', self.src_tok_emb.state_dict())
+        # for key_src in self.src_tok_emb.state_dict().keys():
+        #     tensor_src_key = self.src_tok_emb.state_dict()[key_src].shape
+        #     print(tensor_src_key)
+
+
         self.tgt_tok_emb = TokenEmbedding(tgt_vocab_size, emb_size)
-        self.positional_encoding = PositionalEncoding(
-            emb_size, dropout=dropout)
+        # logger.info(f"{tgt_vocab_size}, {emb_size}")
+        # print('tgt_tok_emb, state_dict\n', self.tgt_tok_emb.state_dict())
+        # for key_tgt in self.tgt_tok_emb.state_dict().keys():
+        #     tensor_tgt_key = self.tgt_tok_emb.state_dict()[key_tgt].shape
+        #     print(tensor_tgt_key)
+
+        self.positional_encoding = PositionalEncoding(emb_size, dropout=dropout)
+
+        # print('+'*70)
+        # print('positional_encoding, state_dict\n', self.positional_encoding.state_dict())
+        # print('positional_encoding, parameters\n', self.positional_encoding.parameters())
+        # print(list(self.positional_encoding.parameters()))
+        # print('-'*70)
+
 
     def forward(self,
                 src: Tensor,
@@ -155,6 +257,7 @@ class Seq2SeqTransformer(nn.Module):
                 src_padding_mask: Tensor,
                 tgt_padding_mask: Tensor,
                 memory_key_padding_mask: Tensor):
+        # logger.info(f"src\n{src.shape}\n{src}")
         src_emb = self.positional_encoding(self.src_tok_emb(src))
         tgt_emb = self.positional_encoding(self.tgt_tok_emb(trg))
         outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
@@ -162,13 +265,20 @@ class Seq2SeqTransformer(nn.Module):
         return self.generator(outs)
 
     def encode(self, src: Tensor, src_mask: Tensor):
-        return self.transformer.encoder(self.positional_encoding(
-                            self.src_tok_emb(src)), src_mask)
+        t3 = self.src_tok_emb(src)
+        t2 = self.positional_encoding(t3)
+        t1 = self.transformer.encoder(t2, src_mask)
+        return t1
+        # return self.transformer.encoder(self.positional_encoding(self.src_tok_emb(src)), src_mask)
 
     def decode(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor):
-        return self.transformer.decoder(self.positional_encoding(
-                          self.tgt_tok_emb(tgt)), memory,
-                          tgt_mask)
+        t3 = self.tgt_tok_emb(tgt)
+        t2 = self.positional_encoding(t3)
+        t1 = self.transformer.decoder(t2, memory, tgt_mask)
+        return t1
+        # return self.transformer.decoder(self.positional_encoding(
+        #                   self.tgt_tok_emb(tgt)), memory,
+        #                   tgt_mask)
 
 
 ######################################################################
@@ -179,9 +289,47 @@ class Seq2SeqTransformer(nn.Module):
 
 
 def generate_square_subsequent_mask(sz):
-    mask = (torch.triu(torch.ones((sz, sz), device=DEVICE)) == 1).transpose(0, 1)
-    mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-    return mask
+    logger.info('sz') # sz is size
+    print(sz)
+
+    t2 = torch.ones((sz, sz), device=DEVICE)
+    logger.info('t2')
+    print(t2)
+
+    t1 = torch.triu(t2) == 1
+    logger.info('t1')
+    print(t1)
+
+    mask = t1.transpose(0, 1)
+    logger.info('mask')
+    print(mask)
+    ### original code:
+    # mask = (torch.triu(torch.ones((sz, sz), device=DEVICE)) == 1).transpose(0, 1)
+
+    t3 = mask
+    t4 = mask == 0
+    logger.info('t4')
+    print(t4)
+
+    t5 = t3.float().masked_fill(t4, float('-inf'))
+    logger.info('t5')
+    print(t5)
+
+    t7 = mask == 1
+    logger.info('t7')
+    print(t7)
+
+    t6 = t5.masked_fill(t7, float(0.0))
+    logger.info('t6')
+    print(t6)
+
+    print('='*70)
+
+    return t6
+
+    ### original code:
+    # mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0)) # to cmt
+    # return mask
 
 
 def create_mask(src, tgt):
@@ -214,9 +362,7 @@ NUM_DECODER_LAYERS = 3
 transformer = Seq2SeqTransformer(NUM_ENCODER_LAYERS, NUM_DECODER_LAYERS, EMB_SIZE,
                                  NHEAD, SRC_VOCAB_SIZE, TGT_VOCAB_SIZE, FFN_HID_DIM)
 
-from torch.utils.tensorboard import SummaryWriter
-# default `log_dir` is "runs" - we'll be more specific here
-writer = SummaryWriter('./runs/transformer_seq2seq_tfboard')
+# logger.info('transformer, state_dict\n', transformer.state_dict())
 
 
 for p in transformer.parameters():
@@ -286,6 +432,9 @@ def train_epoch(model, optimizer):
     model.train()
     losses = 0
     train_iter = Multi30k(split='train', language_pair=(SRC_LANGUAGE, TGT_LANGUAGE))
+    # logger.info(f'print train_iter...')
+    # print(train_iter)
+
     train_dataloader = DataLoader(train_iter, batch_size=BATCH_SIZE, collate_fn=collate_fn)
 
     for i, (src, tgt) in enumerate(train_dataloader):
@@ -297,9 +446,17 @@ def train_epoch(model, optimizer):
         src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt_input)
 
         logits = model(src, tgt_input, src_mask, tgt_mask,src_padding_mask, tgt_padding_mask, src_padding_mask)
+
+        # tfboard
         if i == 0:
+            # print('src:', src)
+            # print('tgt:', tgt)
+
+            writer.add_histogram('src', src)
+            writer.add_histogram('tgt', tgt)
             writer.add_graph(model, (src, tgt_input, src_mask, tgt_mask,src_padding_mask, tgt_padding_mask, src_padding_mask))
             writer.close()
+
 
         optimizer.zero_grad()
 
@@ -353,16 +510,41 @@ for epoch in range(1, NUM_EPOCHS+1):
 
 # function to generate output sequence using greedy algorithm
 def greedy_decode(model, src, src_mask, max_len, start_symbol):
+    logger.info('src')
+    print(src)
+
+    logger.info('src_mask')
+    print(src_mask)
+
+    logger.info('max_len')
+    print(max_len)
+
+    logger.info('start_symbol')
+    print(start_symbol)
+
     src = src.to(DEVICE)
     src_mask = src_mask.to(DEVICE)
 
     memory = model.encode(src, src_mask)
+    logger.info("memory")
+    print(memory)
+
     ys = torch.ones(1, 1).fill_(start_symbol).type(torch.long).to(DEVICE)
+    logger.info("ys")
+    print(ys)
+
     for i in range(max_len-1):
         memory = memory.to(DEVICE)
-        tgt_mask = (generate_square_subsequent_mask(ys.size(0))
-                    .type(torch.bool)).to(DEVICE)
+
+        print(i)
+        print(generate_square_subsequent_mask(ys.size(0)))
+
+        tgt_mask = (generate_square_subsequent_mask(ys.size(0)).type(torch.bool)).to(DEVICE)
+
         out = model.decode(ys, memory, tgt_mask)
+        logger.info('out')
+        print(out)
+
         out = out.transpose(0, 1)
         prob = model.generator(out[:, -1])
         _, next_word = torch.max(prob, dim=1)
@@ -382,8 +564,15 @@ def translate(model: torch.nn.Module, src_sentence: str):
     num_tokens = src.shape[0]
     src_mask = (torch.zeros(num_tokens, num_tokens)).type(torch.bool)
     tgt_tokens = greedy_decode(
-        model,  src, src_mask, max_len=num_tokens + 5, start_symbol=BOS_IDX).flatten()
-    return " ".join(vocab_transform[TGT_LANGUAGE].lookup_tokens(list(tgt_tokens.cpu().numpy()))).replace("<bos>", "").replace("<eos>", "")
+        model, src, src_mask, max_len=num_tokens + 5, start_symbol=BOS_IDX).flatten()
+
+    t2 = list(tgt_tokens.cpu().numpy())
+    t3 = vocab_transform[TGT_LANGUAGE].lookup_tokens(t2)
+    t4 = " ".join(t3)
+    t5 = t4.replace("<bos>", "")
+    t1 = t5.replace("<eos>", "")
+    return t1
+    # return " ".join(vocab_transform[TGT_LANGUAGE].lookup_tokens(list(tgt_tokens.cpu().numpy()))).replace("<bos>", "").replace("<eos>", "")
 
 
 ######################################################################
